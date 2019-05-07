@@ -1,0 +1,120 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Eng"
+date: "April 27, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
+```
+
+# Introduction 
+
+This analysis is about prediction of activity classes based on accelerometers data on the belt, forearm, arm, and dumbell of 6 participants. There are 2 set of data; training and testing set. Anaylysis is done based on training set, and we will predict the activity classes of 20 test cases in testing set. FOr more information, please see: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har (section on the Weight Lifting Exercise Dataset).  
+
+# Data Loading and Preprocessing
+
+### Load all needed packages
+```{r packages}
+library(caret)
+library(rpart)
+library(randomForest)
+library(gbm)
+```
+
+```{r loaddata}
+training <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", header = TRUE, stringsAsFactors = FALSE)
+testing <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", header = TRUE, stringsAsFactors = FALSE)
+
+dim(training)
+dim(testing)
+```
+
+```{r strdata}
+str(training)
+training$classe <- as.factor(training$classe)
+```
+
+From training set, it can be seen that some variables are extracted as character, we will need to convert them to numeric. Besides, the first 7 variables are the information of the participants, and there are also variables which contain NAs (more than 90% NAs). They can be excluded from the analysis as they will not contribute any information in predicting the activity classes. We will impute NAs values with mean for each variables with less than 10% NAs.
+
+Exclude participants' info.
+```{r exclude_usersinfo}
+trainingClean <- training[,-c(1:7)] 
+```
+
+Convert variables to numeric except *classe*.
+```{r convert_numeric}
+for(i in 1:ncol(trainingClean)){
+    if (is.character(trainingClean[,i]) & names(trainingClean[i]) != "classe") {
+        trainingClean[,i] <- as.numeric(trainingClean[,i])
+    }
+}
+```
+
+Exclude variables with more than 90% NAs, impute remaining NAs values with mean.  
+```{r excludeimpute_NAs}
+trainingClean <- trainingClean[, colSums(is.na(trainingClean)) <= 0.1*nrow(trainingClean)] 
+
+for(i in 1:ncol(trainingClean)){
+  trainingClean[is.na(trainingClean[,i]), i] <- mean(trainingClean[,i], na.rm = TRUE)
+}
+
+dim(trainingClean)
+```
+
+Number of training set variables has been reduced to `r ncol(trainingClean)`. 
+
+It will be better if we have another set of data for model validation before performing prediction on testing set.  
+```{r validationdata}
+set.seed(1025)
+inTrain <- createDataPartition(trainingClean$classe, p=3/4, list=FALSE)
+trainingData <- trainingClean[inTrain, ]
+validationData <- trainingClean[-inTrain, ]
+dim(trainingData) 
+dim(validationData)
+```
+
+# Train Model
+We will perform training using 3 methods; classification trees, random forest and gradient boosting method (gbm), and select the best model with highest accuracy to do prediction. In order to avoid overfitting, we will also use cross validation with 5 folds in the 3 methods above. The activity class variable in training set is *classe*. We will also set **allowParallel = TRUE** to improve runtime.  
+
+```{r cv}
+ctrl <- trainControl(method='cv', number=3, allowParallel = TRUE, verboseIter = FALSE)
+```
+
+### Classification Tree Model
+```{r ct}
+set.seed(1025)
+fit_ct <- train(classe~., data = trainingData, method = 'rpart', trControl=ctrl)
+pred_ct <- predict(fit_ct, newdata = validationData)
+confusionMatrix(pred_ct, validationData$classe)$overall["Accuracy"]
+```
+
+### Random Forest Model
+```{r rf}
+set.seed(1025)
+fit_rf <- train(classe~., data = trainingData,  method = 'rf', trControl=ctrl, verbose = FALSE)
+pred_rf <- predict(fit_rf, newdata = validationData)
+confusionMatrix(pred_rf, validationData$classe)$overall["Accuracy"]
+```
+
+### Gradient Boosting Method Model
+```{r gbm}
+fit_gbm <- train(classe~., data = trainingData, method = 'gbm', trControl=ctrl, verbose=FALSE)
+pred_gbm <- predict(fit_gbm, newdata = validationData)
+confusionMatrix(pred_gbm, validationData$classe)$overall["Accuracy"]
+```
+
+# Conclusion & Prediction  
+It can be seen that random forest model is the one with highest accuracy of `r round(confusionMatrix(pred_rf, validationData$classe)$overall["Accuracy"]*100, 2)`% and smallest out-of-sample-error of `r 100-round(confusionMatrix(pred_rf, validationData$classe)$overall["Accuracy"]*100, 2)`%.  
+
+The top 20 most important variables for the prediction are:
+```{r varImp}
+varImp(fit_rf)
+```
+
+We will now use the best model to predict the activity classes of 20 test cases in testing set.
+```{r predicttest}
+predict(fit_rf, newdata = testing)
+```
+
